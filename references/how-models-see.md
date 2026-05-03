@@ -55,15 +55,29 @@
 
 - T5-XXL 是一个纯文本 LLM 的编码器，在大量自然语言文本上训练
 - 对**长文本、复杂句子、逻辑关系**的理解远超 CLIP
-- 没有 77 token 的限制（实际限制大得多）
+- 没有 77 token 的限制（实际限制大得多，可达数百）
 
 **对写 prompt 的影响：**
 - 用 T5 编码器的模型（Flux, DALL-E 3）可以用**完整的自然语言句子**
 - 但仍然遵循"具体 > 模糊"的规律——T5 只是更擅长处理自然语言形式，不是魔法
+- T5 对空间关系（left, right, behind, above）的理解比 CLIP 好，但也不是精确的空间推理
 
 ### 为什么"Prompt 用英文写"更好
 
 大多数 text encoder 的训练数据以英文为主。中文 token 在 embedding 空间中的位置相对稀疏、训练不够充分。部分模型（T5 系）也处理中文，但英文的 embedding 质量更稳定。FLUX 和 SD3 对中文的支持较好，但 MJ/SD 系列英文效果明显更优。
+
+### Token 位置效应：为什么前面的词更重要
+
+在 Transformer 架构的 text encoder 中，**较早的 token 会获得更多的 attention**。这是因为：
+
+1. Transformer 的自注意力机制是双向的，但早期的 token 在每一层都会被后续 token "看到"并参与计算
+2. CLIP 使用的是 causal attention mask 的变体——前面的 token 积累了更多层的信息
+3. 在实际测试中，prompt 前 5-10 个 token 对画面的影响远超后面的 token
+
+**实操启示：**
+- 最重要的内容放在最前面
+- 如果你把风格词放在前面（"watercolor painting of..."），风格会显著强于内容词在前的版本
+- 诊断 prompt 问题时，第一件事就是检查关键内容 token 的**位置**
 
 ---
 
@@ -96,22 +110,39 @@ Prompt: "A red ball and a blue cube"
 
 **原因**：cross-attention 是"软"绑定——"red"这个 token 同时关注了球和立方体两个区域，而没有强制只关注球。模型的注意力机制在区分"哪个形容词修饰哪个名词"方面存在天然缺陷。
 
+这个问题的技术名称叫 **Attribute Binding Problem**，是扩散模型研究中的开放难题。
+
 **应对策略：**
 - 用空间语言明确分离：`A red ball on the left side, a blue cube on the right side`
 - 减少同一画面中的独立主体数量（≤3 个为宜）
 - 如果主体之间有强关联（拥抱、手持），成功率高于独立并置
+- 将颜色词嵌入主体名：用 `ruby-red balloon` 代替 `red balloon`——复合词让颜色 token 和主体 token 的 embedding 更紧密耦合
+
+### 负面标签的 attention 行为
+
+当使用负向 prompt 时（如 SD 系列），模型在计算 CFG 时会推开负向 token 的视觉方向。但值得注意的是：
+
+- 负向 token 同样会通过 cross-attention 影响图像生成的内部表示
+- 太多负向 token 会产生"互相打架"的效果——A 推开 B，B 推开 A，模型在矛盾空间中震荡
+- 5-10 个精准的负向 token 效果远好于 50 个泛泛的
 
 ### Style Token 的特殊性
 
 风格类 token（`oil painting`, `anime`, `cinematic`, `watercolor`）往往是**全局注意力**——它们影响整个画面的美学倾向，而不是某个特定区域。这就是为什么：
 
 - 风格词放在 prompt 的**后部**效果更好（先确定画什么，再确定怎么画）
-- 多个冲突的风格词（`photorealistic anime oil painting`）会让模型困惑
+- 多个冲突的风格词（`photorealistic anime oil painting`）会让模型困惑——风格 embedding 取平均
 - 一个明确指向的风格 > 三个模糊的风格
 
 ---
 
 ## 4. Denoising 过程：文本如何引导图像"浮现"
+
+### 扩散模型的直觉理解
+
+想象一幅画被逐渐加入噪声，直到彻底变成纯噪声。扩散模型学习的就是这个过程的**逆过程**——从噪声中一步步恢复出图像。
+
+每一步去噪时，模型都在当前噪声图像上加上一点"图像信号"，这个信号的**方向**由 prompt 通过 cross-attention 提供。
 
 ### CFG（Classifier-Free Guidance）
 
@@ -125,7 +156,7 @@ CFG 是控制 prompt 跟随强度的核心参数：
 - **CFG 中（5-9）**：平衡点，大多数场景推荐
 - **CFG 高（10+）**：强行跟随 prompt，但可能产生过度锐化、不自然的画面
 
-**这就是为什么负向 prompt 有效**：在 CFG 计算中，模型同时做正向（跟 prompt）和负向（远离负向 prompt）两个方向，然后取差值放大。负向 prompt 本质上是在"推开"不想要的视觉特征。
+**这就是为什么负向 prompt 有效**：在 CFG 计算中，模型同时做正向（跟 prompt）和负向（远离负向 prompt）两个方向，然后取差值放大。负向 prompt 是在"推开"不想要的视觉特征。
 
 ### 负向 Prompt 的实际机制
 
@@ -140,6 +171,13 @@ CFG 是控制 prompt 跟随强度的核心参数：
 - `blurry, distorted anatomy`（视觉特征）✅
 - `no dogs, no people`（语义排除）❌ —— 效果很差！模型不擅长"排除概念"
 - 负向 prompt 过长（>50 tokens）会稀释效果
+
+### 去噪步数的影响
+
+不同的步数不仅仅是"质量高低的区别"：
+- **少步数（10-20）**：粗放、大块面的画面，适合概念/抽象风格
+- **中等步数（20-50）**：标准质量的平衡点
+- **多步数（50-150）**：精细细节，对 prompt 跟随更紧密，但边际收益递减
 
 ---
 
@@ -180,6 +218,17 @@ CFG 是控制 prompt 跟随强度的核心参数：
 
 **特性**：structure token 是最难执行的——它们要求模型精确控制空间布局。扩散模型天然不擅长精确布局（因为没有显式的几何推理）。对 layout 有严格要求时，优先考虑 ControlNet/IP-Adapter 等辅助工具，而不是纯靠 prompt。
 
+### 三维矩阵：不同表达意图的 token 配比
+
+| 表达意图 | Content 占比 | Style 占比 | Structure 占比 |
+|---------|-------------|-----------|---------------|
+| 快速尝鲜 / 景物快照 | 80% | 10% | 10% |
+| 氛围叙事 | 50% | 30% | 20% |
+| 人物肖像 | 60% | 25% | 15% |
+| 概念海报 | 20% | 40% | 40% |
+| 抽象概念转译 | 40% | 20% | 40% |
+| 生活切片 | 50% | 20% | 30% |
+
 ### Quality Token（质量轴）— 大部分是"安慰剂"
 
 ```
@@ -190,7 +239,7 @@ CFG 是控制 prompt 跟随强度的核心参数：
 - 这些 token 在 CLIP 的 embedding 空间中，**不携带可区分的视觉信息**
 - 对 SD 1.5 有微弱影响（因为训练数据中有这类标签）
 - 对 SDXL、Flux、DALL-E 3、MJ v6 等新一代模型**几乎无效**
-- 用户看到很多 prompt 加这些词不是因为它们有用，而是因为"所有人都这么做"
+- 用户看到很多 prompt 加这些词不是因为它们有用，而是因为"所有人都这么做"——这称为 cargo cult prompting
 
 **该怎么做：**
 - 如果用户要的是"高品质、精细"的画面，用**描述画面质量的具象词**代替："fine grain leather texture", "visible wood grain on the table", "individual strands of hair"
@@ -199,12 +248,29 @@ CFG 是控制 prompt 跟随强度的核心参数：
 
 ---
 
-## 6. 从模型原理推导的 6 条铁律
+## 6. 不同架构模型的适用场景
+
+| 模型系列 | Text Encoder | 最佳场景 | 弱项 |
+|---------|-------------|---------|------|
+| SD 1.5 | CLIP ViT-L/14 (77 token) | 简单场景、关键词驱动、配合 ControlNet 精确控制 | 复杂场景、自然语言理解、长 prompt |
+| SDXL | CLIP-L + OpenCLIP-G | 中等复杂度、标签订阅的风格探索 | 极端精细控制、复杂叙事 |
+| SD3 / SD3.5 | T5 + CLIP 双编码 | 自然语言描述、复杂构图 | 对非常短的标签式 prompt 可能不如 SDXL |
+| Flux | T5-XXL + CLIP-L | 极强的 prompt 跟随、自然语言长描述、写实场景 | 计算量较大、需要更多 VRAM |
+| DALL-E 3 | T5-XXL 变体 | 自然语言创意描述、多轮迭代 | prompt 被内部改写不可控、风格范围受限 |
+| ChatGPT 生图 | GPT-4o 多模态 | 多轮对话迭代、中文 prompt、从模糊到具体 | 对精确像素级控制不如 SD 系 |
+| Midjourney v6 | 自研混合编码器 | 氛围/情绪词极为敏感、艺术风格出色 | 精确控制困难、依赖参数调节 |
+| 国内平台 | 自研/混合 | 中文优化、本地化审美 | 能力边界和模型透明度不如国际主流 |
+
+---
+
+## 7. 从模型原理推导的 6 条铁律
 
 ### 铁律 1：Content 在前，Style 在后
 
 early tokens → 更强的 cross-attention → 主导"画什么"
 later tokens → 较弱的全局影响 → 主导"怎么画"
+
+但有一个例外：如果你优先级最高的是「风格一致性」（比如一定要水墨风），可以把风格词放在前面。
 
 ### 铁律 2：具象 > 抽象，永远如此
 
