@@ -42,23 +42,6 @@
 
 ***
 
-## 📁 文件结构
-
-```
-image-prompt-crafter/
-├── SKILL.md                        ← 核心工作流（复杂匹配 + 引导采访 + 诊断模式）
-├── evals/
-│   └── evals.json                  ← 5 个测试用例（快速尝鲜 / 模糊需求 / 平台适配 / 诊断优化）
-└── references/
-    ├── how-models-see.md           ← 扩散模型底层原理（Encoder → Cross-Attention → Denoising）
-    ├── prompt-debugging.md         ← 诊断框架（5 类问题诊断树 + 快速预判表）
-    ├── style-keywords.md           ← 视觉关键词库（Content / Style / Structure 三轴分类）
-    ├── platform-guide.md           ← 平台语法指南（含架构差异表）
-    └── prompt-anatomy.md           ← Prompt 结构解析（三段结构 + 最小有效 Prompt + 反模式）
-```
-
-***
-
 ## 🚀 安装
 
 ### 方式一：让Agent帮你装（推荐）
