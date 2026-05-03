@@ -1,7 +1,6 @@
 # 🎨 Image Prompt Crafter
 
-> > AI生图Prompt辅助Skill——不是关键词模板库，是一个**视觉翻译者**。你描述你想要的感觉，它帮你转译成模型能懂的Prompt。
-
+> AI生图Prompt辅助Skill——不是关键词模板库，是一个**视觉翻译者**。你描述你想要的感觉，它帮你转译成模型能懂的Prompt。
 >
 > A prompt engineering Skill for AI image generation, built on diffusion model fundamentals — not keyword cookbooks.
 ***
